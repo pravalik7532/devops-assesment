@@ -1,0 +1,40 @@
+pipeline {
+    agent {
+        node {
+            label 'slave_label_for_docker_build' # where we can run the build
+        }
+    }
+    stages {
+        stage ('checkout') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'XXXXXXXXXXXXXXXXXXXXXX', url: 'git@github.com:test_repo/repo_name.git']]])
+            }
+        }
+        stage ('docker_build') {
+            steps {
+                sh "DOCKER_CONFIG=.docker AWS_ACCESS_KEY_ID=[YOUR_ACCESS_KEY_ID] AWS_SECRET_ACCESS_KEY=[YOUR_SECRET_KEY]" // optional
+                sh """
+                docker build -t ${params.CONTAINER_IMAGE}:${params.GIT_TAG} \
+                   --force-rm --no-cache .
+                """
+            }
+        }
+        stage ('docker_push') {
+            steps {
+                sh """
+                eval \$(aws ecr get-login --registry-ids ${params.acc_id} --no-include-email --region us-east-1)
+                docker push ${params.CONTAINER_IMAGE}:${params.GIT_TAG}
+                """
+            }
+        }
+        stage ('docker_deploy') {
+            steps {
+                sh """
+                curl https://raw.githubusercontent.com/silinternational/ecs-deploy/master/ecs-deploy | sudo tee /usr/bin/ecs-deploy
+                sudo chmod +x /usr/bin/ecs-deploy
+                docker pull ${params.CONTAINER_IMAGE}:${params.GIT_TAG}
+                ecs-deploy -k $AWS_KEY -s $AWS_SECRET -r us-east-1 -c $CLUSTER_NAME -n $SERVICE_NAME -i ${params.CONTAINER_IMAGE}:${params.GIT_TAG}
+            }
+        }
+    }
+}
